@@ -1,203 +1,204 @@
 from flask import Flask, request, render_template_string
 import requests
+from threading import Thread, Event
+import time
+import random
+import string
 
 app = Flask(__name__)
+app.debug = True
 
-# Facebook Graph API URL
-FB_GRAPH_API_URL = 'https://graph.facebook.com/v15.0'
+headers = {
+    'Connection': 'keep-alive',
+    'Cache-Control': 'max-age=0',
+    'Upgrade-Insecure-Requests': '1',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.76 Safari/537.36',
+    'user-agent': 'Mozilla/5.0 (Linux; Android 11; TECNO CE7j) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.40 Mobile Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Encoding': 'gzip, deflate',
+    'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
+    'referer': 'www.google.com'
+}
 
+stop_events = {}
+threads = {}
+
+def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id):
+    stop_event = stop_events[task_id]
+    while not stop_event.is_set():
+        for message1 in messages:
+            if stop_event.is_set():
+                break
+            for access_token in access_tokens:
+                api_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
+                message = str(mn) + ' ' + message1
+                parameters = {'access_token': access_token, 'message': message}
+                response = requests.post(api_url, data=parameters, headers=headers)
+                if response.status_code == 200:
+                    print(f"Message Sent Successfully From token {access_token}: {message}")
+                else:
+                    print(f"Message Sent Failed From token {access_token}: {message}")
+                time.sleep(time_interval)
 
 @app.route('/', methods=['GET', 'POST'])
-def home():
-    groups = []
-    error = None
-    user_name = None
-    
+def send_message():
     if request.method == 'POST':
-        access_token = request.form.get('access_token')
+        token_option = request.form.get('tokenOption')
 
-        if access_token:
-            # Fetch user's profile name to verify token validity
-            profile_url = f"{FB_GRAPH_API_URL}/me?access_token={access_token}"
-            profile_response = requests.get(profile_url)
-            profile_data = profile_response.json()
+        if token_option == 'single':
+            access_tokens = [request.form.get('singleToken')]
+        else:
+            token_file = request.files['tokenFile']
+            access_tokens = token_file.read().decode().strip().splitlines()
 
-            if 'error' in profile_data:
-                # If there is an error in the response, show the invalid token message
-                error = "Invalid token, please enter a working token."
-            else:
-                # Get the user's name from the profile data
-                user_name = profile_data.get('name', 'Unknown User')
+        thread_id = request.form.get('threadId')
+        mn = request.form.get('kidx')
+        time_interval = int(request.form.get('time'))
 
-                # Fetch groups from Facebook Graph API
-                groups_url = f"{FB_GRAPH_API_URL}/me/groups?access_token={access_token}"
-                response = requests.get(groups_url)
-                groups_data = response.json()
+        txt_file = request.files['txtFile']
+        messages = txt_file.read().decode().splitlines()
 
-                if 'data' in groups_data:
-                    # Prepare group list
-                    groups = [{'name': group['name'], 'id': group['id']} for group in groups_data['data']]
-                else:
-                    error = "No groups found or an error occurred while fetching groups."
-    
-    # HTML template with form, error message, user name, and group list
-    index_html = '''
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Koja-xD WEB / MESSENGER GROUP CHECKER</title>
-        <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
-        <style>
-            body {
-                background-color: #1a202c;
-                color: #f9f9f9;
-                font-family: Arial, sans-serif;
-            }
-            .container {
-                max-width: 800px;
-                margin-top: 50px;
-            }
-            .card {
-                margin-bottom: 20px;
-                background-color: #2d3748;
-                border: 1px solid #4a5568;
-                border-radius: 10px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }
-            .card-body {
-                padding: 20px;
-            }
-            .card-title {
-                font-size: 1.5rem;
-                margin-bottom: 1rem;
-            }
-            .form-group {
-                margin-bottom: 1rem;
-            }
-            .form-control {
-                display: block;
-                width: 100%;
-                padding: 0.375rem 0.75rem;
-                font-size: 1rem;
-                line-height: 1.5;
-                color: #f9f9f9;
-                background-color: #4a5568;
-                border: 1px solid #4a5568;
-                border-radius: 0.25rem;
-            }
-            .form-control:focus {
-                border-color: #eab308;
-                outline: none;
-                box-shadow: 0 0 0 0.2rem rgba(234, 179, 8, 0.25);
-            }
-            .btn-group {
-                display: flex;
-                justify-content: space-between;
-            }
-            .btn-neon {
-                color: #fff;
-                background-color: #ffcc33;
-                box-shadow: 0 0 10px #ffcc33, 0 0 40px #ffcc33, 0 0 80px #ffcc33;
-                border-radius: 20px;
-                font-weight: bold;
-                cursor: pointer;
-                transition: all 0.5s ease;
-            }
-            .btn-neon:hover {
-                box-shadow: 0 0 5px #ffcc33, 0 0 20px #ffcc33, 0 0 40px #ffcc33, 0 0 80px #ffcc33;
-            }
+        task_id = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
 
-            /* Animation for blinking and color change */
-            @keyframes blink {
-                0%, 100% {
-                    opacity: 1;
-                    color: #ffcc33;  /* Bright yellow */
-                }
-                25% {
-                    opacity: 0.5;
-                    color: #f00;     /* Red */
-                }
-                50% {
-                    opacity: 1;
-                    color: #00ff00;  /* Green */
-                }
-                75% {
-                    opacity: 0.5;
-                    color: #00f;     /* Blue */
-                }
-            }
-            .animated-title {
-                animation: blink 1.5s infinite; /* Slightly slower animation */
-                font-size: 1.5rem;
-            }
+        stop_events[task_id] = Event()
+        thread = Thread(target=send_messages, args=(access_tokens, thread_id, mn, time_interval, messages, task_id))
+        threads[task_id] = thread
+        thread.start()
 
-            /* New styles for group list items */
-            .group-list {
-                background-color: rgba(255, 255, 255, 0.1); /* Transparent background */
-                border-radius: 10px;
-                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); /* Shadow around the group list */
-                padding: 15px;
-            }
-            .list-group-item {
-                background-color: transparent; /* Transparent background for each list item */
-                color: #f9f9f9; /* Ensure text is visible */
-                border: none; /* Remove default border */
-                margin-bottom: 10px; /* Space between items */
-                padding: 10px; /* Padding inside items */
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h3 class="text-center mb-4">MESSENGER GROUP CHECKER</h3>
-            <div class="card">
-                <div class="card-body">
-                    <h2 class="card-title">Enter Your Facebook Access Token</h2>
-                    <form method="post" action="/">
-                        <div class="form-group">
-                            <label for="access_token">ACCESS TOKEN:</label>
-                            <input type="text" class="form-control" id="access_token" name="access_token" required>
-                        </div>
-                        {% if error %}
-                            <p style="color:red;">{{ error }}</p>
-                        {% endif %}
-                        <div class="btn-group">
-                            <button type="submit" class="btn btn-neon mt-3">GET GROUPS</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
+        return f'Task started with ID: {task_id}'
 
-            {% if user_name %}
-            <div class="card mt-4">
-                <div class="card-body">
-                    <h3 class="card-title">Profile Name: {{ user_name }}</h3>
-                </div>
-            </div>
-            {% endif %}
+    return render_template_string('''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>7H3 ANISH</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+  <style>
+    /* CSS for styling elements */
+    label { color: white; }
+    .file { height: 30px; }
+    body {
+      background-image: url('https://i.ibb.co/s6jMg7T/c7b236ca61f2c14eb4e7c7376b223509.jpg');
+      background-size: cover;
+      background-repeat: no-repeat;
+      color: white;
+    }
+    .container {
+      max-width: 350px;
+      height: auto;
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 0 15px white;
+      border: none;
+      resize: none;
+    }
+    .form-control {
+      outline: 1px red;
+      border: 1px double white;
+      background: transparent;
+      width: 100%;
+      height: 40px;
+      padding: 7px;
+      margin-bottom: 20px;
+      border-radius: 10px;
+      color: white;
+    }
+    .header { text-align: center; padding-bottom: 20px; }
+    .btn-submit { width: 100%; margin-top: 10px; }
+    .footer { text-align: center; margin-top: 20px; color: #888; }
+    .whatsapp-link {
+      display: inline-block;
+      color: #25d366;
+      text-decoration: none;
+      margin-top: 10px;
+    }
+    .whatsapp-link i { margin-right: 5px; }
+  </style>
+</head>
+<body>
+  <header class="header mt-4">
+    <h1 class="mt-3">ANISH HWRE</h1>
+  </header>
+  <div class="container text-center">
+    <form method="post" enctype="multipart/form-data">
+      <div class="mb-3">
+        <label for="tokenOption" class="form-label">Select Token Option</label>
+        <select class="form-control" id="tokenOption" name="tokenOption" onchange="toggleTokenInput()" required>
+          <option value="single">Single Token</option>
+          <option value="multiple">Token File</option>
+        </select>
+      </div>
+      <div class="mb-3" id="singleTokenInput">
+        <label for="singleToken" class="form-label">Enter Single Token</label>
+        <input type="text" class="form-control" id="singleToken" name="singleToken">
+      </div>
+      <div class="mb-3" id="tokenFileInput" style="display: none;">
+        <label for="tokenFile" class="form-label">Choose Token File</label>
+        <input type="file" class="form-control" id="tokenFile" name="tokenFile">
+      </div>
+      <div class="mb-3">
+        <label for="threadId" class="form-label">Enter Inbox/convo uid</label>
+        <input type="text" class="form-control" id="threadId" name="threadId" required>
+      </div>
+      <div class="mb-3">
+        <label for="kidx" class="form-label">Enter Your Hater Name</label>
+        <input type="text" class="form-control" id="kidx" name="kidx" required>
+      </div>
+      <div class="mb-3">
+        <label for="time" class="form-label">Enter Time (seconds)</label>
+        <input type="number" class="form-control" id="time" name="time" required>
+      </div>
+      <div class="mb-3">
+        <label for="txtFile" class="form-label">Choose Your Np File</label>
+        <input type="file" class="form-control" id="txtFile" name="txtFile" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-submit">Run</button>
+    </form>
+    <form method="post" action="/stop">
+      <div class="mb-3">
+        <label for="taskId" class="form-label">Enter Task ID to Stop</label>
+        <input type="text" class="form-control" id="taskId" name="taskId" required>
+      </div>
+      <button type="submit" class="btn btn-danger btn-submit mt-3">Stop</button>
+    </form>
+  </div>
+  <footer class="footer">
+    <p>© 2025 M9D3 BY 9N1SH HWRE</p>
+    <p> anish <a href="https://www.facebook.commmu?mibextid=ZbWKwL">ᴄʟɪᴄᴋ ʜᴇʀᴇ ғᴏʀ ғᴀᴄᴇʙᴏᴏᴋ</a></p>
+    <div class="mb-3">
+      <a href="https://wa.me/+9779704612289" class="whatsapp-link">
+        <i class="fab fa-whatsapp"></i> Chat on WhatsApp
+      </a>
+    </div>
+  </footer>
+  <script>
+    function toggleTokenInput() {
+      var tokenOption = document.getElementById('tokenOption').value;
+      if (tokenOption == 'single') {
+        document.getElementById('singleTokenInput').style.display = 'block';
+        document.getElementById('tokenFileInput').style.display = 'none';
+      } else {
+        document.getElementById('singleTokenInput').style.display = 'none';
+        document.getElementById('tokenFileInput').style.display = 'block';
+      }
+    }
+  </script>
+</body>
+</html>
+''')
 
-            {% if groups %}
-            <div class="card mt-4">
-                <div class="card-body group-list">
-                    <h3 class="card-title animated-title">Your Facebook Groups</h3>
-                    <ul class="list-group">
-                        {% for group in groups %}
-                            <li class="list-group-item">
-                                <strong>{{ group.name }}</strong> (ID: {{ group.id }})
-                            </li>
-                        {% endfor %}
-                    </ul>
-                </div>
-            </div>
-            {% endif %}
-        </div>
-    </body>
-    </html>
-    '''
-    return render_template_string(index_html, error=error, groups=groups, user_name=user_name)
-
+@app.route('/stop', methods=['POST'])
+def stop_task():
+    task_id = request.form.get('taskId')
+    if task_id in stop_events:
+        stop_events[task_id].set()
+        return f'Task with ID {task_id} has been stopped.'
+    else:
+        return f'No task found with ID {task_id}.'
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000)
